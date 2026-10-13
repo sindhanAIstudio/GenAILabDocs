@@ -1,0 +1,146 @@
+name: Deploy Production
+
+# Deploys `main` to the production GitHub Pages site of this repository.
+#  - Push to main  -> build + validate -> waits for approval (github-pages
+#    environment required reviewers) -> deploy -> smoke test.
+#  - Rollback      -> run this workflow manually on `main` with `ref` set to a
+#    previously deployed commit SHA or tag. Only commits already on main are accepted,
+#    and the commit must include this pipeline (scripts/ + build-site action).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit SHA or tag on main to (re)deploy — leave empty for current main
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false # queue, never interrupt an in-flight Pages deployment
+
+jobs:
+  build:
+    name: Build production site
+    # Fail-closed: only the repository explicitly marked as production deploys,
+    # and only from main (workflow_dispatch from another branch is ignored).
+    if: vars.DEPLOY_ROLE == 'production' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pages: read
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve and verify deploy ref
+        id: resolve
+        env:
+          REQUESTED_REF: ${{ inputs.ref }}
+        run: |
+          ref="${REQUESTED_REF:-$GITHUB_SHA}"
+          if ! sha=$(git rev-parse --verify --quiet "${ref}^{commit}"); then
+            echo "::error::Ref '${ref}' does not resolve to a commit."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::${sha} is not on main. Production only deploys commits that were merged to main."
+            exit 1
+          fi
+          git checkout --quiet --detach "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ "$sha" != "$GITHUB_SHA" ]; then
+            echo "::notice::Rollback/redeploy of ${sha} (main is at ${GITHUB_SHA})."
+          fi
+          # Informational: did this exact content pass through UAT (develop)?
+          if git rev-parse --verify --quiet origin/develop >/dev/null && ! git diff --quiet "$sha" origin/develop -- . ':!.github'; then
+            echo "::warning::Production content differs from the current develop branch (what UAT is showing). Confirm this release was verified in UAT."
+          fi
+          {
+            echo "### Production deployment candidate"
+            echo "- Commit: \`${sha}\`"
+            echo "- Triggered by: ${GITHUB_EVENT_NAME} by @${GITHUB_ACTOR}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check GitHub Pages configuration
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Build and validate (production)
+        uses: ./.github/actions/build-site
+        with:
+          commit: ${{ steps.resolve.outputs.sha }}
+          deploy-env: production
+          site-url: ${{ vars.PROD_SITE_URL }}
+          base-url: ${{ vars.PROD_BASE_URL }}
+          forbidden-urls: ${{ format('{0}{1}', vars.UAT_SITE_URL, vars.UAT_BASE_URL) }}
+          source-repository: ${{ github.repository }}
+
+      - name: Check configured URL matches GitHub Pages
+        env:
+          PAGES_URL: ${{ steps.pages.outputs.base_url }}
+          EXPECTED: ${{ format('{0}{1}', vars.PROD_SITE_URL, vars.PROD_BASE_URL) }}
+        run: |
+          if [ "${PAGES_URL%/}" != "${EXPECTED%/}" ]; then
+            echo "::error::GitHub Pages reports ${PAGES_URL} but PROD_SITE_URL+PROD_BASE_URL is ${EXPECTED}. Fix the variables or the custom-domain setting."
+            exit 1
+          fi
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: build
+
+  deploy:
+    name: Deploy to production
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    # Configure required reviewers + "main only" deployment branches on this
+    # environment (Settings -> Environments -> github-pages).
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  smoke:
+    name: Smoke test production
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+
+      - name: Smoke test
+        env:
+          SITE_ROOT: ${{ format('{0}{1}', vars.PROD_SITE_URL, vars.PROD_BASE_URL) }}
+          EXPECTED_SHA: ${{ needs.build.outputs.sha }}
+        run: |
+          if ! node scripts/smoke-test.mjs "$SITE_ROOT" production "$EXPECTED_SHA"; then
+            {
+              echo "### Production smoke test FAILED"
+              echo "To roll back, re-run **Deploy Production** on \`main\` with \`ref\` = the last known-good commit."
+              echo "See DEPLOYMENT.md → Rollback."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi

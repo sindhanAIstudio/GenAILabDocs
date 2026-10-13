@@ -1,0 +1,107 @@
+name: CI
+
+# Required status check for pull requests into develop and main.
+# Deploy workflows re-run the same build + validation before publishing.
+on:
+  pull_request:
+    branches: [develop, main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.env }})
+    # Never runs in the UAT mirror repository.
+    if: vars.DEPLOY_ROLE != 'uat'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Builds both deployable configurations so baseUrl/URL mistakes and
+          # cross-environment leaks are caught before merge, not at deploy time.
+          # Fallback values let PRs from forks (no repository variables) still build.
+          - env: production
+            site-url: ${{ vars.PROD_SITE_URL || 'https://prod.invalid' }}
+            base-url: ${{ vars.PROD_BASE_URL || '/' }}
+            forbidden: ${{ format('{0}{1}', vars.UAT_SITE_URL || 'https://uat.invalid', vars.UAT_BASE_URL || '/') }}
+          - env: uat
+            site-url: ${{ vars.UAT_SITE_URL || 'https://uat.invalid' }}
+            base-url: ${{ vars.UAT_BASE_URL || '/' }}
+            forbidden: ${{ format('{0}{1}', vars.PROD_SITE_URL || 'https://prod.invalid', vars.PROD_BASE_URL || '/') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and validate
+        uses: ./.github/actions/build-site
+        with:
+          deploy-env: ${{ matrix.env }}
+          site-url: ${{ matrix.site-url }}
+          base-url: ${{ matrix.base-url }}
+          forbidden-urls: ${{ matrix.forbidden }}
+          source-repository: ${{ github.repository }}
+
+  audit:
+    name: Dependency audit
+    if: vars.DEPLOY_ROLE != 'uat'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      # `npm audit signatures` is intentionally not used: it fails on the npm
+      # alias Docusaurus uses (react-loadable -> @docusaurus/react-loadable).
+      # Report-only: at the time of setup, the remaining advisories are inside
+      # Docusaurus' own (build-time) dependency tree with no non-breaking fix.
+      # Dependabot raises PRs as fixes land. Flip AUDIT_BLOCKING to "true" to gate.
+      - name: npm audit
+        env:
+          AUDIT_BLOCKING: 'false'
+        run: |
+          if npm audit --audit-level=high > audit.txt 2>&1; then
+            echo "No high/critical advisories." >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### npm audit: high/critical advisories present"
+              echo '```'
+              tail -n 40 audit.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::npm audit reports high/critical advisories — see job summary."
+            [ "$AUDIT_BLOCKING" != "true" ] || exit 1
+          fi
+
+  # Single stable check name to mark as "required" in branch protection.
+  ci-result:
+    name: CI result
+    if: always() && vars.DEPLOY_ROLE != 'uat'
+    needs: [build, audit]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any required job failed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for r in $RESULTS; do
+            [ "$r" = "success" ] || { echo "::error::A required CI job did not succeed ($r)."; exit 1; }
+          done

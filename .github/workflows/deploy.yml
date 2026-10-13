@@ -1,0 +1,117 @@
+name: Deploy
+
+# GitHub Pages hosts one site per repository, so both environments share it:
+#   main -> production  https://<pages-url>/
+#   uat  -> UAT         https://<pages-url>/uat/
+# Every run rebuilds both branches and publishes them together, so a push to
+# `uat` never changes production content (and vice versa).
+on:
+  push:
+    branches: [main, uat]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false # never interrupt a Pages deployment mid-flight
+
+jobs:
+  build:
+    name: Build production + UAT
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          path: prod
+
+      - name: Check for uat branch
+        id: uat
+        working-directory: prod
+        run: |
+          if git ls-remote --exit-code --heads origin uat > /dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No uat branch yet — deploying production only."
+          fi
+
+      - name: Checkout uat
+        if: steps.uat.outputs.exists == 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: uat
+          path: uat
+
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: prod/.nvmrc
+          cache: npm
+          cache-dependency-path: '*/package-lock.json'
+
+      - name: Build production
+        working-directory: prod
+        env:
+          DEPLOY_ENV: production
+          SITE_URL: ${{ steps.pages.outputs.origin }}
+          BASE_URL: ${{ steps.pages.outputs.base_path }}/
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Build UAT
+        if: steps.uat.outputs.exists == 'true'
+        working-directory: uat
+        env:
+          DEPLOY_ENV: uat
+          SITE_URL: ${{ steps.pages.outputs.origin }}
+          BASE_URL: ${{ steps.pages.outputs.base_path }}/uat/
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Combine sites
+        env:
+          HAS_UAT: ${{ steps.uat.outputs.exists }}
+        run: |
+          mkdir site
+          cp -R prod/build/. site/
+          if [ "$HAS_UAT" = "true" ]; then
+            mkdir -p site/uat
+            cp -R uat/build/. site/uat/
+          fi
+          {
+            echo "### Deployed"
+            echo "- Production: \`$(git -C prod rev-parse --short HEAD)\` → ${{ steps.pages.outputs.base_url }}/"
+            [ "$HAS_UAT" = "true" ] && echo "- UAT: \`$(git -C uat rev-parse --short HEAD)\` → ${{ steps.pages.outputs.base_url }}/uat/"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

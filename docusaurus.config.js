@@ -8,6 +8,10 @@ import {themes as prismThemes} from 'prism-react-renderer';
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
+// Set by .github/workflows/deploy.yml. Defaults are for local `npm start`.
+const deployEnv = process.env.DEPLOY_ENV || 'development';
+const isUat = deployEnv === 'uat';
+
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'My Site',
@@ -20,15 +24,18 @@ const config = {
   },
 
   // Set the production url of your site here
-  url: 'https://your-docusaurus-site.example.com',
+  url: process.env.SITE_URL || 'https://sindhanaistudio.github.io',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/',
+  baseUrl: process.env.BASE_URL || '/',
+
+  // Keep UAT out of search engines.
+  noIndex: isUat,
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'facebook', // Usually your GitHub org/user name.
-  projectName: 'docusaurus', // Usually your repo name.
+  organizationName: 'sindhanAIstudio', // Usually your GitHub org/user name.
+  projectName: 'GenAILabDocs', // Usually your repo name.
 
   onBrokenLinks: 'throw',
 
@@ -77,6 +84,15 @@ const config = {
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
+      announcementBar: isUat
+        ? {
+            id: 'uat',
+            content: 'UAT environment — content here is under review and not yet live.',
+            backgroundColor: '#fbbf24',
+            textColor: '#000',
+            isCloseable: false,
+          }
+        : undefined,
       // Replace with your project's social card
       image: 'img/docusaurus-social-card.jpg',
       colorMode: {

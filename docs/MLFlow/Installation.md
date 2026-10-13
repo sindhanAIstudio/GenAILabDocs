@@ -1,16 +1,13 @@
 ---
-
 id: mlflow-intro
 title: Intro to ML Ops ft. MLFlow
 description: Windows setup guide for uv, MLflow, and Jupyter Notebook.
 sidebar_position: 1
 tags:
-
-* MLOps
-* MLflow
-* Python
-* Jupyter
-
+  - MLOps
+  - MLflow
+  - Python
+  - Jupyter
 ---
 
 # Intro to ML Ops ft. MLFlow

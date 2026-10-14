@@ -1,6 +1,6 @@
 name: CI
 
-# Build Check for pull requests into uat and main.
+# Build check for pull requests into uat and main.
 on:
   pull_request:
     branches: [main, uat]

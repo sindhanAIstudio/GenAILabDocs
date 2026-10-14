@@ -1,16 +1,13 @@
 ---
-
 id: langflow-ollama-installation
 title: Langflow and Ollama Installation
 description: Step-by-step guide to installing Langflow and Ollama on Windows and connecting a local language model.
 sidebar_position: 2
 tags:
-
-* Langflow
-* Ollama
-* Generative AI
-* Local LLM
-
+  - Langflow
+  - Ollama
+  - Generative AI
+  - Local LLM
 ---
 
 # Langflow and Ollama Installation

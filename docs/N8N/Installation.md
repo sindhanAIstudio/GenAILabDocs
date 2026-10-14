@@ -1,4 +1,3 @@
-
 ---
 id: installation
 title: Installing n8n

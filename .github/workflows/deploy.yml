@@ -51,10 +51,24 @@ jobs:
         id: pages
         uses: actions/configure-pages@v5
 
+      # Branches can lag behind each other, so take .nvmrc from whichever
+      # checkout has it (prod first).
+      - name: Resolve Node version file
+        id: node
+        run: |
+          for f in prod/.nvmrc uat/.nvmrc; do
+            if [ -f "$f" ]; then
+              echo "file=$f" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "::error::No .nvmrc found in prod/ or uat/ checkout."
+          exit 1
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version-file: prod/.nvmrc
+          node-version-file: ${{ steps.node.outputs.file }}
           cache: npm
           cache-dependency-path: '*/package-lock.json'
 

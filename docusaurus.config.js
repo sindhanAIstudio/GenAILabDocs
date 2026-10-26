@@ -14,8 +14,8 @@ const isUat = deployEnv === 'uat';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'My Site',
-  tagline: 'Dinosaurs are cool',
+  title: 'GenAI Lab Docs',
+  tagline: 'Learn, build and ship with generative AI.',
   favicon: 'sindhanai-logo.png',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
@@ -99,10 +99,10 @@ const config = {
         respectPrefersColorScheme: true,
       },
       navbar: {
-        title: 'My Site',
+        title: 'GenAI Lab',
         logo: {
-          alt: 'My Site Logo',
-          src: 'img/docusaurus-social-card.jpg',
+          alt: 'GenAI Lab Logo',
+          src: 'img/sindhanai-logo.png',
         },
         items: [
           {
@@ -162,7 +162,7 @@ const config = {
             ],
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()} My Project, Inc. Built with Docusaurus.`,
+        copyright: `Copyright © ${new Date().getFullYear()} GenAI Lab. Built with Docusaurus.`,
       },
       prism: {
         theme: prismThemes.github,
